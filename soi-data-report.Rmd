@@ -1,5 +1,10 @@
 ---
 title: "Source of Income Discrimination Data Report"
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
 author: "Lauren Parker, Community Legal Services"
 date: "Last update: April 2, 2019"
 output: 
@@ -21,14 +26,6 @@ library(foreign)
 library(leaflet) # for mapping
 library(sf) # for reading shapefiles
 library(DT) # for interactive tables
-
-#library(kableExtra)
-#library(devtools)
-#library(rgdal)
-#library(lubridate)
-#library(data.table)
-
-setwd("T:/SOI Discrimination/")
 
 theme_set(theme_bw()) # dark-on-light theme for maps
 
@@ -64,7 +61,7 @@ hcv <- read.csv("data/HUDPicture_2017_HCV.csv", stringsAsFactors = FALSE) %>%
   mutate(county = str_sub(tract, 1, 5)) %>%
   select(tract, county, hcv_sub_units)
 
-tenure <- read.csv("data/census/ACS_17_5YR_B25003_TENURE/ACS_17_5YR_B25003_with_ann_TENURE.csv", stringsAsFactors = FALSE, colClasses=c("Id2"="character")) %>%
+tenure <- read.csv("data/ACS_17_5YR_B25003_with_ann_TENURE.csv", stringsAsFactors = FALSE, colClasses=c("Id2"="character")) %>%
   mutate(tract = Id2) %>%
   select(-Id, -Id2)
 
@@ -80,8 +77,8 @@ hcv.county <- hcv %>%
   mutate(hcv_rate = 100 * hcv_sub_units/tothh)
 
 # Import Census Data
-hisp <- read.csv("data/census/ACS_17_5YR_B03002_HISP/ACS_17_5YR_B03002_with_ann_HISP.csv", stringsAsFactors = FALSE)
-pov <- read.csv("data/census/ACS_17_5YR_S1701_POVERTY/ACS_17_5YR_S1701_with_ann_POV.csv", stringsAsFactors = FALSE)
+hisp <- read.csv("data/ACS_17_5YR_B03002_with_ann_HISP.csv", stringsAsFactors = FALSE)
+pov <- read.csv("data/ACS_17_5YR_S1701_with_ann_POV.csv", stringsAsFactors = FALSE)
 
 hisp <- hisp %>%
   mutate(tract = as.character(Id2)) %>%
@@ -95,12 +92,12 @@ pov <- pov %>%
   select(tract, totpovstatus, belpov, tract_pct_pov)
 
 # Import Tract Shapefile for Philadelphia
-tracts <- st_read("T:/GIS Basemap/census/tl_2018_42_tract.shp", layer = "tl_2018_42_tract", stringsAsFactors = FALSE) %>%
+tracts <- st_read("shps/tl_2018_42_tract.shp", layer = "tl_2018_42_tract", stringsAsFactors = FALSE) %>%
   mutate(tract = GEOID) %>%
   select(tract, geometry)
 
 # Import County Shapefile
-counties <- st_read("T:/GIS Basemap/census/tl_2018_us_county.shp", layer = "tl_2018_us_county", stringsAsFactors = FALSE) %>%
+counties <- st_read("shps/PA_Counties.shp", layer = "PA_Counties", stringsAsFactors = FALSE) %>%
   mutate(state = str_sub(GEOID, 1, 2)) %>%
   filter(state == "42") %>%
   mutate(county = GEOID) %>%
@@ -120,10 +117,10 @@ counties <- left_join(counties, hcv.county, by = "county")
 # Import HUD Small Area FMRs and Zip Codes
 safmr <- read.csv("data/hud_phila_small_fmrs_fy2019.csv", stringsAsFactors = FALSE)
 fmr <- read.csv("data/hud_phila_fmrs_fy2015.csv", stringsAsFactors = FALSE) #https://www.huduser.gov/portal/datasets/fmr/fmrs/FY2015_code/2015summary.odn
-zcta <- st_read("T:/GIS Basemap/census/Phila_ZCTA_WGS84.shp", layer = "Phila_ZCTA_WGS84", stringsAsFactors = FALSE)
+zcta <- st_read("shps/Phila_ZCTA_WGS84.shp", layer = "Phila_ZCTA_WGS84", stringsAsFactors = FALSE)
 
 # Import Median Gross Rent Data
-rent <- read.csv("data/census/ACS_17_5YR_B25064_RENT/ACS_17_5YR_B25064_with_ann_RENT.csv", stringsAsFactors = FALSE) %>%
+rent <- read.csv("data/ACS_17_5YR_B25064_with_ann_RENT.csv", stringsAsFactors = FALSE) %>%
   mutate(high_moe = ifelse(moe_median_rent/median_rent > 0.40, 1, 0)) %>%
   mutate(tract = as.character(GEOID))
 
@@ -170,7 +167,7 @@ The following map shows the estimated percent of voucher holders by neighborhood
 ```{r phl_map, warning=FALSE, fig.width = 6, fig.height = 5.5}
 
 # Calculate HCVs by Neighborhood
-tract.neigh <- read.dbf("T:/SOI Discrimination/shps/Tracts_Neigh_Int.dbf", as.is = TRUE) %>%
+tract.neigh <- read.dbf("shps/Tracts_Neigh_Int.dbf", as.is = TRUE) %>%
   mutate(tract = GEOID) %>%
   mutate(neigh = MAPNAME) %>%
   mutate(int_fract = AreaInt_ft/Area_ft) %>%
@@ -188,7 +185,7 @@ neigh.hcv <- tract.neigh %>%
   as.data.frame() %>%
   mutate(hcv_rate = ifelse(hh < 10, NA, 100*hcv/hh))
 
-neigh <- st_read("T:/GIS Basemap/odp/Neighborhoods_Phila_WGS84.shp", layer = "Neighborhoods_Phila_WGS84", stringsAsFactors = FALSE) %>%
+neigh <- st_read("shps/Neighborhoods_Phila_WGS84.shp", layer = "Neighborhoods_Phila_WGS84", stringsAsFactors = FALSE) %>%
   mutate(neigh = MAPNAME) %>%
   select(neigh, geometry) %>%
   left_join(neigh.hcv, by = "neigh")
