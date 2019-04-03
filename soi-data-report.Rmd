@@ -188,7 +188,7 @@ neigh.hcv <- tract.neigh %>%
   as.data.frame() %>%
   mutate(hcv_rate = ifelse(hh < 10, NA, 100*hcv/hh))
 
-neigh <- st_read("T:/GIS Basemap/odp/Neighborhoods_Phila_WGS84.shp", layer = "Neighborhoods_Phila_WGS84", stringsAsFactors = FALSE) %>%
+neigh <- st_read("shps/Neighborhoods_Phila_WGS84.shp", layer = "Neighborhoods_Phila_WGS84", stringsAsFactors = FALSE) %>%
   mutate(neigh = MAPNAME) %>%
   select(neigh, geometry) %>%
   left_join(neigh.hcv, by = "neigh")
