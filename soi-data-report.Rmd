@@ -1,0 +1,450 @@
+---
+title: "Source of Income Discrimination Data Report"
+author: "Lauren Parker, Community Legal Services"
+date: "Last update: April 2, 2019"
+output: 
+  html_document:
+    theme: flatly
+    code_folding: hide
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(stringr)
+library(knitr)
+library(foreign)
+library(leaflet) # for mapping
+library(sf) # for reading shapefiles
+library(DT) # for interactive tables
+
+#library(kableExtra)
+#library(devtools)
+#library(rgdal)
+#library(lubridate)
+#library(data.table)
+
+setwd("T:/SOI Discrimination/")
+
+theme_set(theme_bw()) # dark-on-light theme for maps
+
+```
+
+# Overview
+This report presents an overview of local and statewide Housing Choice Voucher (HCV) usage to better understand where source of income discrimination may be occurring.
+
+This report was built using open-source programming, tools and datasets. 
+
+# Data Sources
+
+All datasets used in this report are publicly-available and from administrative sources. 
+
+ - HUD Picture of Subsidized Households, Vouchers by Census Tract, 2017.
+ - HUD FY 2019 Small Area Fair Market Rents, Philadelphia-Camden-Wilmington.
+ - US Census Bureau, TIGERLINE Shapefiles of Tracts, Counties, Zip Code Tabulation Areas.
+ - US Census Bureau, American Community Survey, 5-Year Estimates, 2017:
+    + Tenure - Table B25003
+    + Poverty Status - Table S1701
+    + Race & Ethnicity - Table B03002
+    + Median Gross Rent - Table B25064
+ - Philadelphia Neighborhoods Shapefile, OpenDataPhilly.
+ 
+ *** 
+
+``` {r import, results = "hide", fig.align = 'center', warning = FALSE}
+
+# Import Housing Choice Voucher Data
+hcv <- read.csv("data/HUDPicture_2017_HCV.csv", stringsAsFactors = FALSE) %>%
+  filter(Id2 != "42XXX999999") %>%
+  mutate(tract = Id2) %>%
+  mutate(county = str_sub(tract, 1, 5)) %>%
+  select(tract, county, hcv_sub_units)
+
+tenure <- read.csv("data/census/ACS_17_5YR_B25003_TENURE/ACS_17_5YR_B25003_with_ann_TENURE.csv", stringsAsFactors = FALSE, colClasses=c("Id2"="character")) %>%
+  mutate(tract = Id2) %>%
+  select(-Id, -Id2)
+
+hcv <- hcv %>%
+  left_join(tenure, by = "tract") %>%
+  mutate(hcv_rate = ifelse(tothh < 10, NA, 100 * hcv_sub_units/tothh))
+
+hcv.county <- hcv %>%
+  group_by(county) %>%
+  summarise(hcv_sub_units = sum(hcv_sub_units, na.rm = TRUE),
+            tothh = sum(tothh, na.rm = TRUE)) %>%
+  as.data.frame() %>%
+  mutate(hcv_rate = 100 * hcv_sub_units/tothh)
+
+# Import Census Data
+hisp <- read.csv("data/census/ACS_17_5YR_B03002_HISP/ACS_17_5YR_B03002_with_ann_HISP.csv", stringsAsFactors = FALSE)
+pov <- read.csv("data/census/ACS_17_5YR_S1701_POVERTY/ACS_17_5YR_S1701_with_ann_POV.csv", stringsAsFactors = FALSE)
+
+hisp <- hisp %>%
+  mutate(tract = as.character(Id2)) %>%
+  mutate(tract_poc = totpop - nhisp_wh) %>%
+  mutate(tract_pct_poc = 100*(totpop - nhisp_wh)/totpop) %>%
+  select(tract, totpop, tract_poc, tract_pct_poc)
+
+pov <- pov %>%
+  mutate(tract = as.character(Id2)) %>%
+  mutate(tract_pct_pov = 100 * (belpov/totpovstatus)) %>%
+  select(tract, totpovstatus, belpov, tract_pct_pov)
+
+# Import Tract Shapefile for Philadelphia
+tracts <- st_read("T:/GIS Basemap/census/tl_2018_42_tract.shp", layer = "tl_2018_42_tract", stringsAsFactors = FALSE) %>%
+  mutate(tract = GEOID) %>%
+  select(tract, geometry)
+
+# Import County Shapefile
+counties <- st_read("T:/GIS Basemap/census/tl_2018_us_county.shp", layer = "tl_2018_us_county", stringsAsFactors = FALSE) %>%
+  mutate(state = str_sub(GEOID, 1, 2)) %>%
+  filter(state == "42") %>%
+  mutate(county = GEOID) %>%
+  select(county, geometry, NAME)
+
+# Join data to tracts and counties
+tracts <- left_join(tracts, hcv, by = "tract")
+tracts[, 3:7][is.na(tracts[, 3:7])] <- 0 # Replace NAs with 0s 
+tracts <- tracts %>%
+  mutate(county = str_sub(tract, 1, 5)) %>%
+  left_join(hisp, by = "tract") %>%
+  left_join(pov, by = "tract") %>%
+  mutate(recap = ifelse(tract_pct_poc>=50 & tract_pct_pov >= 40, "RECAP", "NOT RECAP")) # RECAP definition by HUD: https://data.world/hud/recap
+
+counties <- left_join(counties, hcv.county, by = "county")
+
+# Import HUD Small Area FMRs and Zip Codes
+safmr <- read.csv("data/hud_phila_small_fmrs_fy2019.csv", stringsAsFactors = FALSE)
+fmr <- read.csv("data/hud_phila_fmrs_fy2015.csv", stringsAsFactors = FALSE) #https://www.huduser.gov/portal/datasets/fmr/fmrs/FY2015_code/2015summary.odn
+zcta <- st_read("T:/GIS Basemap/census/Phila_ZCTA_WGS84.shp", layer = "Phila_ZCTA_WGS84", stringsAsFactors = FALSE)
+
+# Import Median Gross Rent Data
+rent <- read.csv("data/census/ACS_17_5YR_B25064_RENT/ACS_17_5YR_B25064_with_ann_RENT.csv", stringsAsFactors = FALSE) %>%
+  mutate(high_moe = ifelse(moe_median_rent/median_rent > 0.40, 1, 0)) %>%
+  mutate(tract = as.character(GEOID))
+
+
+```
+
+
+# Where are Voucher Holders Living?
+
+This section uses tract-level data from HUD on voucher holders in 2017 to show the spatial distribution. 
+
+
+
+
+## Voucher Holders in Pennsylvania
+
+The following is a dot density map of voucher holders across Pennsylvania. Each dot represents 10 households with vouchers and is randomly placed within it's respective Census tract (the dots do not represent the exact location of households). Click on each county to see the number and percentage of voucher holders.
+
+```{r pa_map, warning=FALSE, fig.width = 8, fig.height = 5.5}
+
+dots <- suppressMessages(st_sample(tracts, size = round(tracts$hcv_sub_units/10), type = "random")) # each dot = 10 hcv units
+popup <- paste0("County: ", counties$NAME, "<br>", "Voucher Rate: ", round(counties$hcv_rate, 2), "<br>", "Vouchers: ", counties$hcv_sub_units)
+
+
+m <- leaflet(options = leafletOptions(preferCanvas = TRUE)) %>%
+  addProviderTiles("Esri.WorldGrayCanvas", options = providerTileOptions(
+  updateWhenZooming = FALSE,      # map won't update tiles until zoom is done
+  updateWhenIdle = TRUE           # map won't load new tiles when panning
+    )) %>%
+  addCircleMarkers(data = dots, weight = 0, color = "#18BC9B", radius = 3) %>%
+  addPolygons(data = counties, fill = FALSE, stroke = TRUE, color = "#626468", weight = 1, popup = ~popup) %>%
+  addLegend("bottomright", colors= "#18BC9B", labels="1 dot = 10 HCVs", title="Vouchers in PA Counties") 
+  
+m
+
+```
+
+
+## Voucher Holders in Philadelphia
+
+The following map shows the estimated percent of voucher holders by neighborhood in Philadelphia. Click on individual neighborhoods to see the number and percent of voucher holders in that area. Neighborhood estimates were produced from tract-level estimates by applying area-weights.
+
+
+```{r phl_map, warning=FALSE, fig.width = 6, fig.height = 5.5}
+
+# Calculate HCVs by Neighborhood
+tract.neigh <- read.dbf("T:/SOI Discrimination/shps/Tracts_Neigh_Int.dbf", as.is = TRUE) %>%
+  mutate(tract = GEOID) %>%
+  mutate(neigh = MAPNAME) %>%
+  mutate(int_fract = AreaInt_ft/Area_ft) %>%
+  select(tract, neigh, Area_ft, AreaInt_ft, int_fract) %>%
+  left_join(hcv, by = "tract") %>%
+  mutate(hcv_weighted = hcv_sub_units * int_fract) %>%
+  mutate(hh_weighted = tothh * int_fract) 
+
+neigh.hcv <- tract.neigh %>%
+  group_by(neigh) %>%
+  summarise(
+    hcv = sum(hcv_weighted, na.rm = TRUE),
+    hh = sum(hh_weighted, na.rm = TRUE)
+  ) %>%
+  as.data.frame() %>%
+  mutate(hcv_rate = ifelse(hh < 10, NA, 100*hcv/hh))
+
+neigh <- st_read("T:/GIS Basemap/odp/Neighborhoods_Phila_WGS84.shp", layer = "Neighborhoods_Phila_WGS84", stringsAsFactors = FALSE) %>%
+  mutate(neigh = MAPNAME) %>%
+  select(neigh, geometry) %>%
+  left_join(neigh.hcv, by = "neigh")
+
+bins <- quantile(neigh$hcv_rate, seq(0,1, by = 1/5), na.rm = TRUE)
+pal <- colorBin("YlOrRd", domain = neigh$hcv_rate, bins = bins)
+popup <- paste0("Neighborhood: ", neigh$neigh, "<br>", "Voucher Rate: ", round(neigh$hcv_rate, 2), "<br>", "Vouchers: ", round(neigh$hcv, 0))
+
+m2 <- leaflet(neigh) %>%   
+      setView(lng = -75.140012, lat = 39.999786, zoom = 11) %>%
+      addProviderTiles("Esri.WorldGrayCanvas") %>% #Stamen.TonerBackground
+      addPolygons(color = "#ffffff", weight = 1, smoothFactor = 0.5, opacity = 0.8, fillOpacity = 0.5,
+                  fillColor = ~pal(hcv_rate), popup = ~popup,
+                  highlightOptions = highlightOptions(color = "#444444", weight = 2, bringToFront = TRUE)) %>%
+      addLegend(pal = pal, values = ~hcv_rate, opacity = 0.7, title = "Voucher Holders </br> per 100 Households", position = "bottomright")
+
+m2
+
+```
+
+
+
+
+```{r phl_tbl}
+
+neigh.tbl <- neigh
+st_geometry(neigh.tbl) <- NULL
+neigh.tbl <- neigh.tbl %>%
+  mutate(hcv = round(hcv),
+         hh = round(hh),
+         hcv_rate = round(hcv_rate,2))
+
+datatable(neigh.tbl, rownames = FALSE, colnames = c("Neighborhood", "HCV", "Households", "HCV per 100 Households"))
+
+```
+
+
+***
+
+# RECAP Analysis
+
+HUD established the definition of Racially and Ethnically Concentrated Areas of Poverty (RECAP) as Census tracts with:
+
+ - a population of people of color of 50 percent or more, and
+ - a poverty rate of 40 percent or more.
+
+See: https://data.world/hud/recap for more information.
+
+This table presents the number and percent of tenants with vouchers in RECAP tracts vs. non-RECAP tracts.
+
+
+```{r recap, results='asis'}
+
+recap <- tracts %>%
+  group_by(county, recap) %>%
+  summarise(
+    total_households = sum(tothh, na.rm = TRUE), 
+    total_hcv = sum(hcv_sub_units, na.rm = TRUE),
+    ave_hcv_rate = mean(hcv_rate, na.rm = TRUE),
+    ave_pct_poc = mean(tract_pct_poc, na.rm = TRUE)
+  ) %>%
+  as.data.frame() %>%
+  left_join(counties, by = "county") %>%
+  filter(is.na(recap)==FALSE) %>%
+  select(county, NAME, recap, total_hcv) %>%
+  spread(recap, total_hcv) %>% # convert to wide
+  as.data.frame() %>%
+  rename(not_recap = `NOT RECAP`) %>%
+  rename(recap = RECAP) %>%
+  mutate(pct_recap = round(100*(recap/(recap+not_recap)),2))
+  
+
+datatable(recap, rownames = FALSE, colnames = c("County ID", "County", "HCVs not in RECAPs", "HCVs in RECAPs", "% HCVs in RECAPs"))
+
+```
+
+
+Results for Philadelphia:
+
+```{r recap_phl, results = 'asis', warning=FALSE, fig.width = 6, fig.height = 5.5}
+
+phl.tracts <- tracts %>%
+  filter(county == "42101")
+
+phl.recap <- phl.tracts %>%
+  filter(recap == "RECAP")
+
+bins <- quantile(phl.tracts$hcv_rate, seq(0,1, by = 1/5), na.rm = TRUE)
+pal <- colorBin("YlOrRd", domain = phl.tracts$hcv_rate, bins = bins)
+popup <- paste0("Voucher Rate: ", round(phl.tracts$hcv_rate, 2), "<br>", "Vouchers: ", round(phl.tracts$hcv_sub_units, 0))
+
+
+m3 <- leaflet(phl.tracts) %>%   
+      setView(lng = -75.140012, lat = 39.999786, zoom = 11) %>%
+      addProviderTiles("Esri.WorldGrayCanvas", group = "Base") %>% 
+      addPolygons(group = "Voucher Rate",
+                  color = "#ffffff", 
+                  weight = 1, opacity = 0.5, 
+                  fillOpacity = 0.5, fillColor = ~pal(hcv_rate), 
+                  popup = ~popup,
+                  highlightOptions = highlightOptions(color = "#444444", weight = 2)) %>%
+      addPolygons(data = phl.recap,
+                  group = "RECAP", 
+                  color = "#3b485e", weight = 3, 
+                  fill = "#ffffff", fillOpacity = 0.2) %>%    
+      addLegend(pal = pal, values = ~hcv_rate, opacity = 0.7, title = "Voucher Holders </br> per 100 Households", position = "bottomright") %>%
+      addLegend(data = phl.recap, colors = "#3b485e", labels = "RECAP Tracts", position = "bottomright") %>%
+      addLayersControl(
+        baseGroups = "Base",
+        overlayGroups = c("Voucher Rate", "RECAP"),
+        options = layersControlOptions(collapsed = FALSE)
+      )
+      
+m3
+
+```
+
+***
+
+# Philadelphia Neighborhoods at Higher Risk of Discrimination
+
+Based on NYC [analysis](https://moda-nyc.github.io/Project-Library/projects/source-of-income-discrimination/) by the Commision on Human Rights and Mayor's Office of Data Analytics.
+
+
+ - Neighborhood is approximated by Census tract.
+ - School quality
+ - Felony counts
+ - Number of rentals/housing stock
+ - LLCs/business owners
+ - Demographic, income from Census
+ - Housing Choice Vouchers
+ 
+NYC Methodology:
+
+1. Summarise neighborhoods
+ 
+ - Exclude park/cemetary/airport
+ - Bottom quartile of HCV
+ - Contain at least 8 rental units
+ - Lower than median felony count
+ - Higher than median student achievement score
+ 
+2. Build ownership portfolio
+
+ - Group buildings based on owner's mailing address to ID large owners for testers
+
+***
+
+
+
+
+# Effect of Implementing Small Area FMRs
+
+In late 2016, HUD began using small area Fair Market Rents (FMRs) in certain metropolitan areas to set payment standards for Housing Choice Voucher recipients.  In the Philadelphia-Camden-Wilmington metro area, zip codes are used as small area FMRs. 
+
+Small area FMRs were an attempt to correct for the error in using county or metro-wide Fair Market Rent estimates. In theory, small area FMRs would be closer to the on-the-ground rent reality; however, zip codes are still large geographies that do not match perfectly to more granular neighborhood-level rental prices. For example, in gentrifying areas, small area FMRs may underestimate rents, further disincentivizing landlords from renting to tenants with vouchers.
+
+The following map shows the difference between 2019 small area FMRs for a 2-bedroom unit and the 2015 metro-wide FMR for a 2-bedroom unit ($1,156). A positive number reflects areas
+
+```{r fmr}
+
+safmr <- safmr %>%
+  mutate(efficiency = gsub("\\$", "", efficiency)) %>%
+  mutate(br_1 = gsub("\\$", "", br_1)) %>%
+  mutate(br_2 = gsub("\\$", "", br_2)) %>%
+  mutate(br_3 = gsub("\\$", "", br_3)) %>%
+  mutate(br_4 = gsub("\\$", "", br_4)) %>%
+  mutate(efficiency = gsub(",", "", efficiency)) %>%
+  mutate(br_1 = gsub(",", "", br_1)) %>%
+  mutate(br_2 = gsub(",", "", br_2)) %>%
+  mutate(br_3 = gsub(",", "", br_3)) %>%
+  mutate(br_4 = gsub(",", "", br_4)) %>%
+  mutate(efficiency = as.integer(efficiency)) %>%
+  mutate(br_1 = as.integer(br_1)) %>%
+  mutate(br_2 = as.integer(br_2)) %>%
+  mutate(br_3 = as.integer(br_3)) %>%
+  mutate(br_4 = as.integer(br_4)) %>%
+  mutate(br2_diff = br_2 - 1156)
+  
+
+zcta.fmr <- zcta %>%
+  mutate(zip = as.integer(GEOID10)) %>%
+  select(zip, geometry) %>%
+  left_join(safmr, by = "zip")
+
+bins <- c(-166, -75, -5, 5, 200, 644)
+pal <- colorBin("PuOr", domain = zcta.fmr$br2_diff, bins = bins)
+popup <- paste0("Difference $: ", zcta.fmr$br2_diff)
+
+
+m4 <- leaflet(zcta.fmr) %>%   
+      setView(lng = -75.140012, lat = 39.999786, zoom = 11) %>%
+      addProviderTiles("Esri.WorldGrayCanvas") %>% 
+      addPolygons(color = "#ffffff", weight = 1, smoothFactor = 0.5, opacity = 0.8, fillOpacity = 0.5,
+                  fillColor = ~pal(br2_diff), popup = ~popup,
+                  highlightOptions = highlightOptions(color = "#444444", weight = 2)) %>%
+      
+      addLegend(pal = pal, values = ~br2_diff, opacity = 0.7, title = "FMR Difference", position = "bottomright")
+m4
+
+
+```
+
+
+
+
+# Summary of Literature on SOI Discrimination
+
+
+```{r soi_lit}
+
+# lit <- read.csv("SOI Literature Summary.csv", stringsAsFactors = FALSE)
+# datatable(lit, rownames = FALSE)
+
+```
+
+
+
+# Statistical Test of Difference in Neighborhoods
+
+Methodology: 
+
+ - Tract as proxy for neighborhood
+ - Lower quartile of tracts with HCV vs. rest
+ - Compare neighborhood statistics at tract level:
+   - Median gross rent
+   - Small area FMR > 110% median gross rent
+   - Crime
+   - School performance - school catchment? crow flies distance?
+   - Transit access - 1/4 mile walk? all modes? time to center city? 
+   - Code violations - rate
+   - "Appreciating" - 
+
+
+```{r test}
+
+phl.tracts.rent <- phl.tracts %>%
+  left_join(rent, by = "tract") %>%
+  filter(high_moe != 1)
+
+
+bins <- quantile(phl.tracts.rent$median_rent, seq(0,1, by = 1/5), na.rm = TRUE)
+pal <- colorBin("YlOrRd", domain = phl.tracts.rent$median_rent, bins = bins)
+popup <- paste0("Rent: ", phl.tracts.rent$median_rent)
+
+
+m6 <- leaflet(phl.tracts.rent) %>%   
+      setView(lng = -75.140012, lat = 39.999786, zoom = 11) %>%
+      addProviderTiles("Esri.WorldGrayCanvas") %>% 
+      addPolygons(color = "#ffffff", weight = 1, smoothFactor = 0.5, opacity = 0.8, fillOpacity = 0.5,
+                  fillColor = ~pal(median_rent), popup = ~popup,
+                  highlightOptions = highlightOptions(color = "#444444", weight = 2)) %>%
+      
+      addLegend(pal = pal, values = ~median_rent, opacity = 0.7, title = "Median Rent by Tract", position = "bottomright")
+    
+m6
+
+
+```
