@@ -5,15 +5,13 @@ knit: (function(input_file, encoding) {
   rmarkdown::render(input_file,
  encoding=encoding,
  output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
-author: "Lauren Parker, Community Legal Services"
-date: "Last update: April 2, 2019"
 output: 
   html_document:
     theme: flatly
     code_folding: hide
     toc: true
     toc_float: true
-    number_sections: true
+    #number_sections: true
 ---
 
 ```{r setup, include=FALSE}
@@ -28,14 +26,16 @@ library(sf) # for reading shapefiles
 library(DT) # for interactive tables
 
 theme_set(theme_bw()) # dark-on-light theme for maps
-# test changes
 
 ```
 
-# Overview
-This report presents an overview of local and statewide Housing Choice Voucher (HCV) usage to better understand where source of income discrimination may be occurring.
+*By Lauren Parker, Community Legal Services (4/4/2019)*
 
-This report was built using open-source programming, tools and datasets. 
+
+# Overview
+This report presents data on local and statewide Housing Choice Voucher (HCV) usage to better understand where source of income discrimination may be occurring and support related advocacy efforts.
+
+This report was built using open-source programming, tools and datasets, including R, QGIS, GitHub. 
 
 # Data Sources
 
@@ -131,12 +131,28 @@ rent <- read.csv("data/ACS_17_5YR_B25064_with_ann_RENT.csv", stringsAsFactors = 
 
 # Where are Voucher Holders Living?
 
-This section uses tract-level data from HUD on voucher holders in 2017 to show the spatial distribution. 
-
-
-
+This section uses 2017 data from HUD to show the spatial distribution of households with vouchers, both state-wide and locally in Philadelphia.
 
 ## Voucher Holders in Pennsylvania
+
+Here is a table of voucher households by county:
+
+```{r pa_tbl}
+
+county.tbl <- counties
+st_geometry(county.tbl) <- NULL
+county.tbl <- county.tbl %>%
+  mutate(hcv = round(hcv_sub_units),
+         hh = round(tothh),
+         hcv_rate = round(hcv_rate,2)) %>%
+  select(NAME, hcv, hh, hcv_rate)
+
+datatable(county.tbl, rownames = FALSE, colnames = c("County", "HCV", "Households", "HCV per 100 Households"), 
+          options = list(order = list(list(1, 'desc'))))
+
+```
+
+
 
 The following is a dot density map of voucher holders across Pennsylvania. Each dot represents 10 households with vouchers and is randomly placed within it's respective Census tract (the dots do not represent the exact location of households). Click on each county to see the number and percentage of voucher holders.
 
@@ -186,7 +202,7 @@ neigh.hcv <- tract.neigh %>%
   as.data.frame() %>%
   mutate(hcv_rate = ifelse(hh < 10, NA, 100*hcv/hh))
 
-neigh <- st_read("shps/Neighborhoods_Phila_WGS84.shp", layer = "Neighborhoods_Phila_WGS84", stringsAsFactors = FALSE) %>%
+neigh <- st_read("shps/Neighborhoods_Phila_WGS84.shp", layer = "Neighborhoods_Phila_WGS84", stringsAsFactors = FALSE, quiet = TRUE) %>%
   mutate(neigh = MAPNAME) %>%
   select(neigh, geometry) %>%
   left_join(neigh.hcv, by = "neigh")
@@ -219,14 +235,15 @@ neigh.tbl <- neigh.tbl %>%
          hh = round(hh),
          hcv_rate = round(hcv_rate,2))
 
-datatable(neigh.tbl, rownames = FALSE, colnames = c("Neighborhood", "HCV", "Households", "HCV per 100 Households"))
+datatable(neigh.tbl, rownames = FALSE, colnames = c("Neighborhood", "HCV", "Households", "HCV per 100 Households"),
+          options = list(order = list(list(3, 'desc'))))
 
 ```
 
 
 ***
 
-# RECAP Analysis
+# Racially/Ethnically Concentrated Areas of Poverty
 
 HUD established the definition of Racially and Ethnically Concentrated Areas of Poverty (RECAP) as Census tracts with:
 
@@ -259,12 +276,13 @@ recap <- tracts %>%
   mutate(pct_recap = round(100*(recap/(recap+not_recap)),2))
   
 
-datatable(recap, rownames = FALSE, colnames = c("County ID", "County", "HCVs not in RECAPs", "HCVs in RECAPs", "% HCVs in RECAPs"))
+datatable(recap, rownames = FALSE, colnames = c("County ID", "County", "HCVs not in RECAPs", "HCVs in RECAPs", "% HCVs in RECAPs"),
+          options = list(order = list(list(4, 'desc'))))
 
 ```
 
 
-Results for Philadelphia:
+***Results for Philadelphia**
 
 ```{r recap_phl, results = 'asis', warning=FALSE, fig.width = 6, fig.height = 5.5}
 
@@ -306,37 +324,6 @@ m3
 
 ***
 
-# Philadelphia Neighborhoods at Higher Risk of Discrimination
-
-Based on NYC [analysis](https://moda-nyc.github.io/Project-Library/projects/source-of-income-discrimination/) by the Commision on Human Rights and Mayor's Office of Data Analytics.
-
-
- - Neighborhood is approximated by Census tract.
- - School quality
- - Felony counts
- - Number of rentals/housing stock
- - LLCs/business owners
- - Demographic, income from Census
- - Housing Choice Vouchers
- 
-NYC Methodology:
-
-1. Summarise neighborhoods
- 
- - Exclude park/cemetary/airport
- - Bottom quartile of HCV
- - Contain at least 8 rental units
- - Lower than median felony count
- - Higher than median student achievement score
- 
-2. Build ownership portfolio
-
- - Group buildings based on owner's mailing address to ID large owners for testers
-
-***
-
-
-
 
 # Effect of Implementing Small Area FMRs
 
@@ -346,7 +333,7 @@ Small area FMRs were an attempt to correct for the error in using county or metr
 
 The following map shows the difference between 2019 small area FMRs for a 2-bedroom unit and the 2015 metro-wide FMR for a 2-bedroom unit ($1,156). A positive number reflects areas
 
-```{r fmr}
+```{r fmr, warning=FALSE}
 
 safmr <- safmr %>%
   mutate(efficiency = gsub("\\$", "", efficiency)) %>%
@@ -391,7 +378,7 @@ m4
 ```
 
 
-
+***
 
 # Summary of Literature on SOI Discrimination
 
@@ -403,7 +390,36 @@ m4
 
 ```
 
+***
 
+# Philadelphia Neighborhoods at Higher Risk of Discrimination
+
+Based on NYC [analysis](https://moda-nyc.github.io/Project-Library/projects/source-of-income-discrimination/) by the Commision on Human Rights and Mayor's Office of Data Analytics.
+
+
+ - Neighborhood is approximated by Census tract.
+ - School quality
+ - Felony counts
+ - Number of rentals/housing stock
+ - LLCs/business owners
+ - Demographic, income from Census
+ - Housing Choice Vouchers
+ 
+NYC Methodology:
+
+1. Summarise neighborhoods
+ 
+ - Exclude park/cemetary/airport
+ - Bottom quartile of HCV
+ - Contain at least 8 rental units
+ - Lower than median felony count
+ - Higher than median student achievement score
+ 
+2. Build ownership portfolio
+
+ - Group buildings based on owner's mailing address to ID large owners for testers
+
+***
 
 # Statistical Test of Difference in Neighborhoods
 
@@ -420,6 +436,7 @@ Methodology:
    - Code violations - rate
    - "Appreciating" - 
 
+***
 
 ```{r test}
 
