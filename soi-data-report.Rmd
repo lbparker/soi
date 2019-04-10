@@ -11,7 +11,7 @@ output:
     code_folding: hide
     toc: true
     toc_float: true
-    #number_sections: true
+    number_sections: true
 ---
 
 ```{r setup, include=FALSE}
@@ -29,7 +29,7 @@ theme_set(theme_bw()) # dark-on-light theme for maps
 
 ```
 
-*By Lauren Parker, Community Legal Services (4/4/2019)*
+*Last Update: April 8, 2019*
 
 
 # Overview
@@ -44,7 +44,7 @@ All datasets used in this report are publicly-available and from administrative 
  - HUD Picture of Subsidized Households, Vouchers by Census Tract, 2017.
  - HUD FY 2019 Small Area Fair Market Rents, Philadelphia-Camden-Wilmington.
  - US Census Bureau, TIGERLINE Shapefiles of Tracts, Counties, Zip Code Tabulation Areas.
- - US Census Bureau, American Community Survey, 5-Year Estimates, 2017:
+ - US Census Bureau, American Community Survey, 5-Year Estimates, 2017 and prior years:
     + Tenure - Table B25003
     + Poverty Status - Table S1701
     + Race & Ethnicity - Table B03002
@@ -80,6 +80,8 @@ hcv.county <- hcv %>%
 # Import Census Data
 hisp <- read.csv("data/ACS_17_5YR_B03002_with_ann_HISP.csv", stringsAsFactors = FALSE)
 pov <- read.csv("data/ACS_17_5YR_S1701_with_ann_POV.csv", stringsAsFactors = FALSE)
+rent <- read.csv("data/ACS_17_5YR_B25064_with_ann_RENT.csv", stringsAsFactors = FALSE)
+rent.zcta <- read.csv("data/ZCTA_ACS_17_5YR_B25064_with_ann_RENT.csv", stringsAsFactors = FALSE)
 
 hisp <- hisp %>%
   mutate(tract = as.character(Id2)) %>%
@@ -92,7 +94,16 @@ pov <- pov %>%
   mutate(tract_pct_pov = 100 * (belpov/totpovstatus)) %>%
   select(tract, totpovstatus, belpov, tract_pct_pov)
 
-# Import Tract Shapefile for Philadelphia
+rent <- rent %>%
+  mutate(high_moe = ifelse(moe_median_rent/median_rent > 0.40, 1, 0)) %>%
+  mutate(tract = as.character(GEOID))
+
+rent.zcta <- rent.zcta %>%
+  mutate(high_moe = ifelse(moe_median_rent/median_rent > 0.40, 1, 0)) %>%
+  mutate(zcta = as.integer(GEOID))
+
+
+# Import Tract Shapefile for Pennsylvania
 tracts <- st_read("shps/tl_2018_42_tract.shp", layer = "tl_2018_42_tract", stringsAsFactors = FALSE) %>%
   mutate(tract = GEOID) %>%
   select(tract, geometry)
@@ -116,26 +127,25 @@ tracts <- tracts %>%
 counties <- left_join(counties, hcv.county, by = "county")
 
 # Import HUD Small Area FMRs and Zip Codes
-safmr <- read.csv("data/hud_phila_small_fmrs_fy2019.csv", stringsAsFactors = FALSE)
+safmr <- read.csv("data/hud_phila_small_fmrs_fy2019.csv", stringsAsFactors = FALSE) %>%
+  mutate(zcta = zip)
 fmr <- read.csv("data/hud_phila_fmrs_fy2015.csv", stringsAsFactors = FALSE) #https://www.huduser.gov/portal/datasets/fmr/fmrs/FY2015_code/2015summary.odn
 zcta <- st_read("shps/Phila_ZCTA_WGS84.shp", layer = "Phila_ZCTA_WGS84", stringsAsFactors = FALSE)
 
-# Import Median Gross Rent Data
-rent <- read.csv("data/ACS_17_5YR_B25064_with_ann_RENT.csv", stringsAsFactors = FALSE) %>%
-  mutate(high_moe = ifelse(moe_median_rent/median_rent > 0.40, 1, 0)) %>%
-  mutate(tract = as.character(GEOID))
-
 
 ```
+<br>
+<br>
+<br>
 
-
-# Where are Voucher Holders Living?
+# Spatial Distribution
 
 This section uses 2017 data from HUD to show the spatial distribution of households with vouchers, both state-wide and locally in Philadelphia.
 
-## Voucher Holders in Pennsylvania
+<br>
 
-Here is a table of voucher households by county:
+## Pennsylvania
+<br>
 
 ```{r pa_tbl}
 
@@ -152,7 +162,8 @@ datatable(county.tbl, rownames = FALSE, colnames = c("County", "HCV", "Household
 
 ```
 
-
+<br>
+<br>
 
 The following is a dot density map of voucher holders across Pennsylvania. Each dot represents 10 households with vouchers and is randomly placed within it's respective Census tract (the dots do not represent the exact location of households). Click on each county to see the number and percentage of voucher holders.
 
@@ -175,8 +186,41 @@ m
 
 ```
 
+<br>
+<br>
 
-## Voucher Holders in Philadelphia
+**Map of tract-level voucher use across Pennsylvania**
+
+```{r pa_map2, warning=FALSE, fig.width = 8, fig.height = 5.5}
+
+tracts <- tracts %>%
+  filter(hcv_rate < 100.1)
+
+bins <- quantile(tracts$hcv_rate, seq(0,1, by = 1/5), na.rm = TRUE)
+pal <- colorBin("YlOrRd", domain = tracts$hcv_rate, bins = bins)
+popup <- paste0("Voucher Rate: ", round(tracts$hcv_rate, 2), "<br>", 
+                "Vouchers: ", round(tracts$hcv_sub_units, 0))
+
+
+m1 <- leaflet(tracts) %>%   
+    addProviderTiles("Esri.WorldGrayCanvas", group = "Base") %>% 
+    addPolygons(stroke = FALSE,
+                fillColor = ~pal(hcv_rate),
+                weight = 1, opacity = 0.5, 
+                fillOpacity = 0.5, smoothFactor = 0.5,
+                popup = ~popup,
+                highlightOptions = highlightOptions(color = "#444444", weight = 2)) %>%
+    addPolygons(data = counties, fill = FALSE, stroke = TRUE, color = "#626468", weight = 1) %>%
+    addLegend(pal = pal, 
+            values = ~hcv_rate, 
+            opacity = 0.7, title = "Voucher Holders </br> per 100 Households", position = "bottomright")
+    
+m1
+
+```
+
+
+## Philadelphia
 
 The following map shows the estimated percent of voucher holders by neighborhood in Philadelphia. Click on individual neighborhoods to see the number and percent of voucher holders in that area. Neighborhood estimates were produced from tract-level estimates by applying area-weights.
 
@@ -223,7 +267,8 @@ m2
 
 ```
 
-
+<br>
+<br>
 
 
 ```{r phl_tbl}
@@ -243,7 +288,11 @@ datatable(neigh.tbl, rownames = FALSE, colnames = c("Neighborhood", "HCV", "Hous
 
 ***
 
-# Racially/Ethnically Concentrated Areas of Poverty
+<br>
+<br>
+<br>
+
+# RECAP
 
 HUD established the definition of Racially and Ethnically Concentrated Areas of Poverty (RECAP) as Census tracts with:
 
@@ -282,7 +331,11 @@ datatable(recap, rownames = FALSE, colnames = c("County ID", "County", "HCVs not
 ```
 
 
-***Results for Philadelphia**
+<br>
+<br>
+
+**Results for Philadelphia**  
+
 
 ```{r recap_phl, results = 'asis', warning=FALSE, fig.width = 6, fig.height = 5.5}
 
@@ -323,15 +376,22 @@ m3
 ```
 
 ***
+<br>
+<br>
+<br>
 
 
-# Effect of Implementing Small Area FMRs
+# Small Area FMRs
 
-In late 2016, HUD began using small area Fair Market Rents (FMRs) in certain metropolitan areas to set payment standards for Housing Choice Voucher recipients.  In the Philadelphia-Camden-Wilmington metro area, zip codes are used as small area FMRs. 
+In late 2016, HUD began using small area Fair Market Rents (FMRs) in certain metropolitan areas to set payment standards for Housing Choice Voucher recipients.  In the Philadelphia-Camden-Wilmington metro area, zip codes are used as the boundaries for small area FMRs. 
 
-Small area FMRs were an attempt to correct for the error in using county or metro-wide Fair Market Rent estimates. In theory, small area FMRs would be closer to the on-the-ground rent reality; however, zip codes are still large geographies that do not match perfectly to more granular neighborhood-level rental prices. For example, in gentrifying areas, small area FMRs may underestimate rents, further disincentivizing landlords from renting to tenants with vouchers.
+Small area FMRs are an attempt to correct for the error in using county or metro-wide Fair Market Rent estimates. In theory, small area FMRs would be closer to the on-the-ground rent reality; however, zip codes are still large geographies that do not match perfectly to more granular neighborhood-level rental prices. For example, in gentrifying areas, small area FMRs may underestimate rents, further disincentivizing landlords from renting to tenants with vouchers.
 
-The following map shows the difference between 2019 small area FMRs for a 2-bedroom unit and the 2015 metro-wide FMR for a 2-bedroom unit ($1,156). A positive number reflects areas
+The following map shows the difference between 2019 small area FMRs for a 2-bedroom unit and the 2015 metro-wide FMR for a 2-bedroom unit ($1,156). 
+
+  - Positive numbers (purple) are zip codes where the 2019 small area FMR is **higher** than the metro FMR
+  - Negative numbers (orange) are zip codes where the 2019 small area FMR is **lower** than the metro FMR
+  
 
 ```{r fmr, warning=FALSE}
 
@@ -355,13 +415,17 @@ safmr <- safmr %>%
   
 
 zcta.fmr <- zcta %>%
-  mutate(zip = as.integer(GEOID10)) %>%
-  select(zip, geometry) %>%
-  left_join(safmr, by = "zip")
+  mutate(zcta = as.integer(GEOID10)) %>%
+  select(zcta, geometry) %>%
+  left_join(safmr, by = "zcta")
 
 bins <- c(-166, -75, -5, 5, 200, 644)
 pal <- colorBin("PuOr", domain = zcta.fmr$br2_diff, bins = bins)
-popup <- paste0("Difference $: ", zcta.fmr$br2_diff)
+popup <- paste0("<b>2 Bedroom FMR Estimates</b><br><br>", 
+                "Zip Code: ", zcta.fmr$zcta, "<br>",
+                "2019 Small Area: ", zcta.fmr$br_2, "<br>", 
+                "2015 Metro: $1,156", "<br>", 
+                "Difference $: ", zcta.fmr$br2_diff)
 
 
 m4 <- leaflet(zcta.fmr) %>%   
@@ -371,95 +435,135 @@ m4 <- leaflet(zcta.fmr) %>%
                   fillColor = ~pal(br2_diff), popup = ~popup,
                   highlightOptions = highlightOptions(color = "#444444", weight = 2)) %>%
       
-      addLegend(pal = pal, values = ~br2_diff, opacity = 0.7, title = "FMR Difference", position = "bottomright")
+      addLegend(pal = pal, values = ~br2_diff, opacity = 0.7, title = "FMR Difference ($) between </br> 2019 Small Area and 2015 Metro FMRs", position = "bottomright")
 m4
 
 
 ```
 
+<br>
+<br>
 
-***
+The following is a map of the rent difference between 2019 small area FMRs and 2017 Census estimates of median rent per zip code. 
 
-# Summary of Literature on SOI Discrimination
+  - Positive numbers (purple) are zip codes where the 2019 small area FMR is **higher** than the median rent
+  - Negative numbers (orange) are zip codes where the 2019 small area FMR is **lower** than the median rent
 
+```{r rent}
 
-```{r soi_lit}
+zcta.fmr.rent <- zcta.fmr %>%
+  left_join(rent.zcta, by = "zcta") %>%
+  filter(high_moe != 1) %>%
+  mutate(rent_diff = br_2 - median_rent)
 
-# lit <- read.csv("SOI Literature Summary.csv", stringsAsFactors = FALSE)
-# datatable(lit, rownames = FALSE)
-
-```
-
-***
-
-# Philadelphia Neighborhoods at Higher Risk of Discrimination
-
-Based on NYC [analysis](https://moda-nyc.github.io/Project-Library/projects/source-of-income-discrimination/) by the Commision on Human Rights and Mayor's Office of Data Analytics.
-
-
- - Neighborhood is approximated by Census tract.
- - School quality
- - Felony counts
- - Number of rentals/housing stock
- - LLCs/business owners
- - Demographic, income from Census
- - Housing Choice Vouchers
- 
-NYC Methodology:
-
-1. Summarise neighborhoods
- 
- - Exclude park/cemetary/airport
- - Bottom quartile of HCV
- - Contain at least 8 rental units
- - Lower than median felony count
- - Higher than median student achievement score
- 
-2. Build ownership portfolio
-
- - Group buildings based on owner's mailing address to ID large owners for testers
-
-***
-
-# Statistical Test of Difference in Neighborhoods
-
-Methodology: 
-
- - Tract as proxy for neighborhood
- - Lower quartile of tracts with HCV vs. rest
- - Compare neighborhood statistics at tract level:
-   - Median gross rent
-   - Small area FMR > 110% median gross rent
-   - Crime
-   - School performance - school catchment? crow flies distance?
-   - Transit access - 1/4 mile walk? all modes? time to center city? 
-   - Code violations - rate
-   - "Appreciating" - 
-
-***
-
-```{r test}
-
-phl.tracts.rent <- phl.tracts %>%
-  left_join(rent, by = "tract") %>%
-  filter(high_moe != 1)
+bins <- c(-196, -75, -5, 5, 200, 644)
+#bins <- quantile(zcta.fmr.rent$rent_diff, seq(0,1, by = 1/5), na.rm = TRUE)
+pal <- colorBin("PuOr", domain = zcta.fmr.rent$rent_diff, bins = bins)
+popup <- paste0("<b>2 Bedroom Rent Estimates</b><br><br>", 
+                "Zip Code: ", zcta.fmr.rent$zcta, "<br>",
+                "2019 Small Area: ", zcta.fmr.rent$br_2, "<br>", 
+                "2017 Median Rent: ", zcta.fmr.rent$median_rent, "<br>", 
+                "Difference $: ", zcta.fmr.rent$rent_diff)
 
 
-bins <- quantile(phl.tracts.rent$median_rent, seq(0,1, by = 1/5), na.rm = TRUE)
-pal <- colorBin("YlOrRd", domain = phl.tracts.rent$median_rent, bins = bins)
-popup <- paste0("Rent: ", phl.tracts.rent$median_rent)
-
-
-m6 <- leaflet(phl.tracts.rent) %>%   
+m5 <- leaflet(zcta.fmr.rent) %>%   
       setView(lng = -75.140012, lat = 39.999786, zoom = 11) %>%
       addProviderTiles("Esri.WorldGrayCanvas") %>% 
       addPolygons(color = "#ffffff", weight = 1, smoothFactor = 0.5, opacity = 0.8, fillOpacity = 0.5,
-                  fillColor = ~pal(median_rent), popup = ~popup,
+                  fillColor = ~pal(rent_diff), popup = ~popup,
                   highlightOptions = highlightOptions(color = "#444444", weight = 2)) %>%
       
-      addLegend(pal = pal, values = ~median_rent, opacity = 0.7, title = "Median Rent by Tract", position = "bottomright")
-    
-m6
-
+      addLegend(pal = pal, values = ~rent_diff, opacity = 0.7, title = "Rent Difference ($) between </br> 2019 Small Area and 2017 Median Rent", position = "bottomright")
+m5
 
 ```
+
+
+***
+<br>
+<br>
+<br>
+
+# Evictions
+
+This analysis looks at tenants with an eviction filing and a Friday court date in Municipal Court as a proxy for tenants with vouchers. 
+
+<br>
+
+**Total Filings with Friday Court Date Since 2016: **
+
+```{r evictions, fig.width=400}
+
+evict <- data.frame("Year" = c(2016, 2017, 2018, 2019, "Total"), "Filings" = c("3,493", "3,655", "3,155", "467", "10,770"))
+
+datatable(evict, rownames = FALSE)
+
+```
+
+<br>
+<br>
+
+Additional stats:
+
+  - 22% of Friday hearings indicate **termination of term** as a reason (only 2% of cases cite ToT as the only reason)
+  - 26% of clients in Friday hearings were served an **alias writ** (29% of ToT cases received alias writ)
+  - 37% of clients in Friday hearings received a **default judgment** (35% of ToT cases defaulted)
+  
+
+***
+
+<br>
+<br>
+
+# Other Possible Projects 
+
+ - Summary of literature and laws
+ - Neighborhoods at higher risk of discrimination
+ - Statistical test in difference between low- and high-voucher neighborhoods
+
+
+<!-- # Philadelphia Neighborhoods at Higher Risk of Discrimination -->
+
+<!-- Based on NYC [analysis](https://moda-nyc.github.io/Project-Library/projects/source-of-income-discrimination/) by the Commision on Human Rights and Mayor's Office of Data Analytics. -->
+
+
+<!--  - Neighborhood is approximated by Census tract. -->
+<!--  - School quality -->
+<!--  - Felony counts -->
+<!--  - Number of rentals/housing stock -->
+<!--  - LLCs/business owners -->
+<!--  - Demographic, income from Census -->
+<!--  - Housing Choice Vouchers -->
+
+<!-- NYC Methodology: -->
+
+<!-- 1. Summarise neighborhoods -->
+
+<!--  - Exclude park/cemetary/airport -->
+<!--  - Bottom quartile of HCV -->
+<!--  - Contain at least 8 rental units -->
+<!--  - Lower than median felony count -->
+<!--  - Higher than median student achievement score -->
+
+<!-- 2. Build ownership portfolio -->
+
+<!--  - Group buildings based on owner's mailing address to ID large owners for testers -->
+
+<!-- *** -->
+
+<!-- # Statistical Test of Difference in Neighborhoods -->
+
+<!-- Methodology:  -->
+
+<!--  - Tract as proxy for neighborhood -->
+<!--  - Lower quartile of tracts with HCV vs. rest -->
+<!--  - Compare neighborhood statistics at tract level: -->
+<!--    - Median gross rent -->
+<!--    - Small area FMR > 110% median gross rent -->
+<!--    - Crime -->
+<!--    - School performance - school catchment? crow flies distance? -->
+<!--    - Transit access - 1/4 mile walk? all modes? time to center city?  -->
+<!--    - Code violations - rate -->
+<!--    - "Appreciating" -  -->
+
+<!-- *** -->
