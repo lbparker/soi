@@ -102,7 +102,6 @@ rent.zcta <- rent.zcta %>%
   mutate(high_moe = ifelse(moe_median_rent/median_rent > 0.40, 1, 0)) %>%
   mutate(zcta = as.integer(GEOID))
 
-
 # Import Tract Shapefile for Pennsylvania
 tracts <- st_read("shps/tl_2018_42_tract.shp", layer = "tl_2018_42_tract", stringsAsFactors = FALSE) %>%
   mutate(tract = GEOID) %>%
@@ -131,6 +130,9 @@ safmr <- read.csv("data/hud_phila_small_fmrs_fy2019.csv", stringsAsFactors = FAL
   mutate(zcta = zip)
 fmr <- read.csv("data/hud_phila_fmrs_fy2015.csv", stringsAsFactors = FALSE) #https://www.huduser.gov/portal/datasets/fmr/fmrs/FY2015_code/2015summary.odn
 zcta <- st_read("shps/Phila_ZCTA_WGS84.shp", layer = "Phila_ZCTA_WGS84", stringsAsFactors = FALSE)
+
+# Import Phila Federal Reserve Gentrification Tracts
+gent <- st_read("shps/Fed_Gent_Tracts.shp", layer = "Fed_Gent_Tracts", stringsAsFactors = FALSE)
 
 
 ```
@@ -391,7 +393,8 @@ The following map shows the difference between 2019 small area FMRs for a 2-bedr
 
   - Positive numbers (purple) are zip codes where the 2019 small area FMR is **higher** than the metro FMR
   - Negative numbers (orange) are zip codes where the 2019 small area FMR is **lower** than the metro FMR
-  
+
+This map also includes, for reference, Census tracts estimated to be gentrified by the Phila Federal Reserve in a 2016 [study](https://www.philadelphiafed.org/-/media/community-development/publications/discussion-papers/discussion-paper_a-practitioners-summary.pdf?la=en).
 
 ```{r fmr, warning=FALSE}
 
@@ -434,8 +437,12 @@ m4 <- leaflet(zcta.fmr) %>%
       addPolygons(color = "#ffffff", weight = 1, smoothFactor = 0.5, opacity = 0.8, fillOpacity = 0.5,
                   fillColor = ~pal(br2_diff), popup = ~popup,
                   highlightOptions = highlightOptions(color = "#444444", weight = 2)) %>%
+      addPolygons(data = gent,
+                  color = "#3b485e", weight = 3, 
+                  fill = "#ffffff", fillOpacity = 0.2) %>%    
       
-      addLegend(pal = pal, values = ~br2_diff, opacity = 0.7, title = "FMR Difference ($) between </br> 2019 Small Area and 2015 Metro FMRs", position = "bottomright")
+      addLegend(pal = pal, values = ~br2_diff, opacity = 0.7, title = "FMR Difference ($) between </br> 2019 Small Area and 2015 Metro FMRs", position = "bottomright") %>%
+  addLegend(data = gent, colors = "#3b485e", labels = "Gentrified Tracts", position = "bottomright")
 m4
 
 
